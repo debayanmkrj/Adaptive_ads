@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Adaptive Ad System - Multi-Product Cloud</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box;user-select:none}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Roboto','Oxygen','Ubuntu','Cantarell','Fira Sans','Droid Sans','Helvetica Neue',sans-serif;background:#0f0f0f;color:#fff;overflow:hidden}
+    .container{display:flex;height:100vh;width:100vw}
+    .sidebar{width:300px;background:#1a1a1a;padding:20px;overflow-y:auto;flex-shrink:0}
+    .sidebar h2{margin-bottom:15px;font-size:1.3em;color:#667eea}
+    .canvas-area{flex:1;position:relative;overflow:hidden;background:#0a0a0a}
+    .zoomable-canvas{width:100%;height:100%;position:relative;transform-origin:center center;transition:transform 0.3s ease}
+    .product-item{position:absolute;border-radius:12px;box-shadow:0 20px 60px rgba(102,126,234,0.3);cursor:move;z-index:100;transition:box-shadow 0.3s ease}
+    .product-item:hover{box-shadow:0 25px 70px rgba(102,126,234,0.5);z-index:150}
+    .product-item.clicked{box-shadow:0 30px 80px rgba(255,100,100,0.6)}
+    .product-item img{display:block;max-width:300px;max-height:300px;border-radius:12px;pointer-events:none}
+    .cloud-item{position:absolute;border-radius:10px;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,0.5);cursor:move;transition:box-shadow 0.3s ease}
+    .cloud-item:hover{box-shadow:0 15px 40px rgba(102,126,234,0.4);z-index:200}
+    .cloud-item.clicked{box-shadow:0 20px 50px rgba(255,100,100,0.5)}
+    .cloud-item img{width:100%;height:100%;display:block;object-fit:cover;pointer-events:none}
+    .upload-section{margin-bottom:20px}
+    .file-input-label{display:block;padding:12px;background:#667eea;border-radius:6px;text-align:center;cursor:pointer;transition:.3s;color:#fff;font-weight:bold}
+    .file-input-label:hover{background:#5568d3;transform:translateY(-2px)}
+    input[type="file"]{display:none}
+    .preview-container{margin-top:15px;background:#2a2a2a;border-radius:8px;padding:10px;display:none}
+    .preview-container.show{display:block}
+    .preview-img{width:100%;border-radius:6px;margin-bottom:10px}
+    .segment-input{width:100%;padding:10px;border-radius:6px;background:#1a1a1a;color:#fff;border:1px solid #444;margin-bottom:10px}
+    .segment-btn{width:100%;padding:12px;background:#667eea;border:none;border-radius:6px;color:#fff;cursor:pointer;font-weight:bold}
+    .segment-btn:hover{background:#5568d3}
+    .segment-btn:disabled{background:#444;cursor:not-allowed}
+    .stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:15px}
+    .stat-box{background:#2a2a2a;padding:15px;border-radius:6px;text-align:center}
+    .stat-value{font-size:2em;font-weight:bold;color:#667eea}
+    .session-info{background:#2a2a2a;padding:10px;border-radius:6px;margin-bottom:15px;font-size:.9em}
+    .session-id{font-family:monospace;color:#667eea}
+    .error-msg{background:#d9534f;color:#fff;padding:10px;border-radius:6px;margin-top:10px;font-size:.9em}
+    .success-msg{background:#5cb85c;color:#fff;padding:10px;border-radius:6px;margin-top:10px;font-size:.9em}
+    .zoom-controls{position:absolute;top:20px;right:20px;display:flex;gap:10px;z-index:300}
+    .zoom-btn{padding:10px 15px;background:#2a2a2a;border:1px solid #444;border-radius:6px;color:#fff;cursor:pointer;font-size:1.2em;transition:.3s}
+    .zoom-btn:hover{background:#3a3a3a;border-color:#667eea}
+    .analysis-panel{margin-top:15px;padding:15px;background:#2a2a2a;border-radius:6px;border-left:4px solid #667eea}
+    .analysis-title{font-weight:bold;margin-bottom:10px;color:#667eea}
+    .product-list{margin-top:10px}
+    .product-list-item{background:#2a2a2a;padding:10px;border-radius:6px;margin-bottom:8px;font-size:.9em}
+    .product-list-item .name{font-weight:bold;color:#667eea}
+    .product-list-item .stats{opacity:.7;font-size:.85em;margin-top:3px}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+    const API_BASE = 'http://localhost:5000/api';
+
+    function App(){
+      const [sessionId] = useState(() => `session_${Date.now()}_${Math.random().toString(36).slice(2,9)}`);
+      
+      const [uploadedFile, setUploadedFile] = useState(null);
+      const [previewUrl, setPreviewUrl] = useState('');
+      const [segmentText, setSegmentText] = useState('');
+      const [segmenting, setSegmenting] = useState(false);
+      
+      const [products, setProducts] = useState([]);
+      const [compositions, setCompositions] = useState([]);
+      
+      const [stats, setStats] = useState({clicks:0, hovers:0, activeMs:0});
+      const [productEngagement, setProductEngagement] = useState({});
+      const [analysis, setAnalysis] = useState(null);
+      const [errorMsg, setErrorMsg] = useState('');
+      const [successMsg, setSuccessMsg] = useState('');
+      
+      const [zoom, setZoom] = useState(1);
+      const [dragging, setDragging] = useState(null);
+      const canvasRef = useRef(null);
+      const canvasHoverStartRef = useRef(null);
+      const hoverStartRef = useRef({});
+      const timerRef = useRef(null);
+
+      useEffect(() => {
+        const id = setInterval(() => analyzeEngagement(), 2000);
+        return () => clearInterval(id);
+      }, [products]);
+
+      useEffect(() => {
+        timerRef.current = setInterval(() => {
+          if(canvasHoverStartRef.current){
+            const elapsed = Date.now() - canvasHoverStartRef.current;
+            setStats(s => ({...s, activeMs: s.activeMs + 100}));
+          }
+        }, 100);
+        return () => clearInterval(timerRef.current);
+      }, []);
+
+      function handleFileSelect(ev){
+        const file = ev.target.files[0];
+        if(!file) return;
+        
+        setUploadedFile(file);
+        const url = URL.createObjectURL(file);
+        setPreviewUrl(url);
+        setSegmentText('');
+        setErrorMsg('');
+        ev.target.value = null;
+      }
+
+      async function handleSegment(){
+        if(!uploadedFile || !segmentText.trim()){
+          setErrorMsg('Please enter what to segment');
+          return;
+        }
+
+        setSegmenting(true);
+        setErrorMsg('');
+        setSuccessMsg('');
+        
+        const fd = new FormData();
+        fd.append('file', uploadedFile);
+        fd.append('product_name', segmentText.trim());
+        
+        try{
+          const r = await fetch(`${API_BASE}/upload`, { 
+            method:'POST', 
+            body: fd 
+          });
+          
+          if(!r.ok){
+            throw new Error(`Segmentation failed: ${r.status}`);
+          }
+          
+          const d = await r.json();
+          
+          if(d.error){
+            throw new Error(d.error);
+          }
+          
+          if(d.product){
+            const newProduct = {
+              ...d.product,
+              x: 50 + products.length * 350,
+              y: 50
+            };
+            setProducts(prev => [...prev, newProduct]);
+            setProductEngagement(prev => ({...prev, [d.product.id]: {clicks: 0, hovers: 0}}));
+            setSuccessMsg(`✅ Segmented "${segmentText.trim()}"!`);
+            setTimeout(() => setSuccessMsg(''), 5000);
+            setUploadedFile(null);
+            setPreviewUrl('');
+            setSegmentText('');
+          }
+        }catch(e){ 
+          console.error('Segment error:', e);
+          setErrorMsg(`Segmentation failed: ${e.message}`);
+        }finally{ 
+          setSegmenting(false);
+        }
+      }
+
+      async function trackClick(ev, itemId, itemType){
+        ev.stopPropagation();
+        const rect = canvasRef.current.getBoundingClientRect();
+        const x = (ev.clientX - rect.left) / zoom;
+        const y = (ev.clientY - rect.top) / zoom;
+
+        setStats(s => ({...s, clicks: s.clicks+1}));
+        
+        if(itemType === 'product'){
+          setProductEngagement(prev => ({
+            ...prev,
+            [itemId]: {...(prev[itemId] || {clicks:0, hovers:0}), clicks: (prev[itemId]?.clicks || 0) + 1}
+          }));
+        }
+
+        try{
+          await fetch(`${API_BASE}/track`, {
+            method:'POST', 
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ 
+              session_id: sessionId, 
+              type:'click', 
+              data:{x,y,product_id:itemId, timestamp: Date.now()} 
+            })
+          });
+        }catch(e){
+          console.error('Track error:', e);
+        }
+      }
+
+      async function trackHover(itemId, itemType, isEnter){
+        if(isEnter){
+          hoverStartRef.current[itemId] = Date.now();
+        }else if(hoverStartRef.current[itemId]){
+          const duration = Date.now() - hoverStartRef.current[itemId];
+          setStats(s => ({...s, hovers: s.hovers+1}));
+          
+          if(itemType === 'product'){
+            setProductEngagement(prev => ({
+              ...prev,
+              [itemId]: {...(prev[itemId] || {clicks:0, hovers:0}), hovers: (prev[itemId]?.hovers || 0) + 1}
+            }));
+          }
+
+          try{
+            await fetch(`${API_BASE}/track`, {
+              method:'POST', 
+              headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({ 
+                session_id: sessionId, 
+                type:'hover', 
+                data:{product_id:itemId, duration, timestamp: Date.now()} 
+              })
+            });
+          }catch(e){
+            console.error('Track error:', e);
+          }
+          delete hoverStartRef.current[itemId];
+        }
+      }
+
+      function trackCanvasHover(isEnter){
+        if(isEnter){
+          canvasHoverStartRef.current = Date.now();
+        }else if(canvasHoverStartRef.current){
+          const duration = Date.now() - canvasHoverStartRef.current;
+          
+          fetch(`${API_BASE}/track`, {
+            method:'POST', 
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ 
+              session_id: sessionId, 
+              type:'hover_canvas', 
+              data:{duration, timestamp: Date.now()} 
+            })
+          }).catch(e => console.error('Track error:', e));
+          
+          canvasHoverStartRef.current = null;
+        }
+      }
+
+      async function analyzeEngagement(){
+        if(products.length === 0) return;
+        try{
+          const r = await fetch(`${API_BASE}/analyze`, {
+            method:'POST', 
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ session_id: sessionId, layout: [] })
+          });
+          
+          if(!r.ok) return;
+          
+          const d = await r.json();
+          setAnalysis(d);
+          
+          if(d.action === 'new_compositions' && d.compositions){
+            const newComps = d.compositions.map((comp, idx) => ({
+              ...comp,
+              x: 400 + Math.random() * 800,
+              y: 200 + Math.random() * 400,
+              id: `comp_${Date.now()}_${idx}`
+            }));
+            setCompositions(prev => [...prev, ...newComps]);
+          }
+        }catch(e){ 
+          console.error('Analyze error:', e);
+        }
+      }
+
+      function handleZoom(direction){
+        setZoom(prev => {
+          if(direction === 'in') return Math.min(prev + 0.2, 2);
+          if(direction === 'out') return Math.max(prev - 0.2, 0.4);
+          return 1;
+        });
+      }
+
+      function handleMouseDown(ev, item, type){
+        ev.preventDefault();
+        const rect = canvasRef.current.getBoundingClientRect();
+        setDragging({
+          item,
+          type,
+          startX: (ev.clientX - rect.left) / zoom,
+          startY: (ev.clientY - rect.top) / zoom,
+          offsetX: item.x,
+          offsetY: item.y
+        });
+      }
+
+      function handleMouseMove(ev){
+        if(!dragging) return;
+        const rect = canvasRef.current.getBoundingClientRect();
+        const mouseX = (ev.clientX - rect.left) / zoom;
+        const mouseY = (ev.clientY - rect.top) / zoom;
+        
+        const dx = mouseX - dragging.startX;
+        const dy = mouseY - dragging.startY;
+        const newX = dragging.offsetX + dx;
+        const newY = dragging.offsetY + dy;
+
+        if(dragging.type === 'product'){
+          setProducts(prev => prev.map(p => 
+            p.id === dragging.item.id ? {...p, x: newX, y: newY} : p
+          ));
+        }else{
+          setCompositions(prev => prev.map(c => 
+            c.id === dragging.item.id ? {...c, x: newX, y: newY} : c
+          ));
+        }
+      }
+
+      function handleMouseUp(){
+        setDragging(null);
+      }
+
+      useEffect(() => {
+        if(dragging){
+          document.addEventListener('mousemove', handleMouseMove);
+          document.addEventListener('mouseup', handleMouseUp);
+          return () => {
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+          };
+        }
+      }, [dragging]);
+
+      return (
+        <div className="container">
+          <div className="sidebar">
+            <div className="session-info">
+              <strong>Session ID:</strong><br/>
+              <span className="session-id">{sessionId.substring(0, 20)}...</span>
+            </div>
+
+            <div className="upload-section">
+              <h2>Upload Product</h2>
+              
+              {!previewUrl && (
+                <>
+                  <label htmlFor="file-upload" className="file-input-label">
+                    📁 Choose Product Image
+                  </label>
+                  <input 
+                    id="file-upload" 
+                    type="file" 
+                    accept="image/*" 
+                    onChange={handleFileSelect}
+                  />
+                </>
+              )}
+
+              <div className={`preview-container ${previewUrl ? 'show' : ''}`}>
+                {previewUrl && (
+                  <>
+                    <img src={previewUrl} alt="Preview" className="preview-img"/>
+                    
+                    <label style={{display:'block', marginBottom:5, fontSize:'.9em', fontWeight:'bold'}}>
+                      What should I segment?
+                    </label>
+                    <input
+                      className="segment-input"
+                      value={segmentText}
+                      onChange={(e) => setSegmentText(e.target.value)}
+                      placeholder="e.g., perfume bottle, jeans, watch"
+                      disabled={segmenting}
+                      onKeyPress={(e) => {
+                        if(e.key === 'Enter' && !segmenting && segmentText.trim()){
+                          handleSegment();
+                        }
+                      }}
+                    />
+                    
+                    <button 
+                      className="segment-btn"
+                      onClick={handleSegment}
+                      disabled={segmenting || !segmentText.trim()}
+                    >
+                      {segmenting ? '⏳ Segmenting...' : '✂️ Segment'}
+                    </button>
+                    
+                    {!segmenting && (
+                      <button 
+                        className="segment-btn"
+                        style={{marginTop:10, background:'#555'}}
+                        onClick={() => {
+                          setUploadedFile(null);
+                          setPreviewUrl('');
+                          setSegmentText('');
+                        }}
+                      >
+                        ✖ Cancel
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {errorMsg && <div className="error-msg">{errorMsg}</div>}
+              {successMsg && <div className="success-msg">{successMsg}</div>}
+            </div>
+
+            <div>
+              <h2>Products ({products.length})</h2>
+              <div className="product-list">
+                {products.map(p => (
+                  <div key={p.id} className="product-list-item">
+                    <div className="name">{p.name}</div>
+                    <div className="stats">
+                      Clicks: {productEngagement[p.id]?.clicks || 0} | 
+                      Hovers: {productEngagement[p.id]?.hovers || 0}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <h2>Engagement Stats</h2>
+              <div className="stats-grid">
+                <div className="stat-box">
+                  <div className="stat-value">{stats.clicks}</div>
+                  <div className="stat-label">Clicks</div>
+                </div>
+                <div className="stat-box">
+                  <div className="stat-value">{stats.hovers}</div>
+                  <div className="stat-label">Hovers</div>
+                </div>
+                <div className="stat-box" style={{gridColumn:'1 / span 2'}}>
+                  <div className="stat-value">{(stats.activeMs/1000).toFixed(1)}s</div>
+                  <div className="stat-label">Active (45s trigger)</div>
+                </div>
+              </div>
+            </div>
+
+            {analysis && analysis.reasoning && (
+              <div className="analysis-panel">
+                <div className="analysis-title">🧠 AI Analysis</div>
+                {analysis.reasoning.map((r, idx) => (
+                  <div key={idx} style={{fontSize:'.9em',marginBottom:5}}>{r}</div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div 
+            ref={canvasRef}
+            className="canvas-area"
+            onMouseEnter={()=>trackCanvasHover(true)}
+            onMouseLeave={()=>trackCanvasHover(false)}
+          >
+            <div className="zoom-controls">
+              <button className="zoom-btn" onClick={()=>handleZoom('in')}>+</button>
+              <button className="zoom-btn" onClick={()=>handleZoom('reset')}>⊙</button>
+              <button className="zoom-btn" onClick={()=>handleZoom('out')}>−</button>
+            </div>
+
+            <div 
+              className="zoomable-canvas"
+              style={{transform: `scale(${zoom})`}}
+            >
+              {products.map(product => (
+                <div
+                  key={product.id}
+                  className={`product-item ${hoverStartRef.current[product.id] ? 'clicked' : ''}`}
+                  style={{
+                    left: `${product.x}px`,
+                    top: `${product.y}px`
+                  }}
+                  onMouseDown={(e) => handleMouseDown(e, product, 'product')}
+                  onClick={(e) => trackClick(e, product.id, 'product')}
+                  onMouseEnter={() => trackHover(product.id, 'product', true)}
+                  onMouseLeave={() => trackHover(product.id, 'product', false)}
+                >
+                  <img 
+                    src={`data:image/jpeg;base64,${product.views.original.base64}`} 
+                    alt={product.name}
+                  />
+                </div>
+              ))}
+
+              {compositions.map(comp => (
+                <div
+                  key={comp.id}
+                  className={`cloud-item ${hoverStartRef.current[comp.id] ? 'clicked' : ''}`}
+                  style={{
+                    left: `${comp.x}px`,
+                    top: `${comp.y}px`,
+                    width: '280px',
+                    height: '280px'
+                  }}
+                  onMouseDown={(e) => handleMouseDown(e, comp, 'composition')}
+                  onClick={(e) => trackClick(e, comp.id, 'composition')}
+                  onMouseEnter={() => trackHover(comp.id, 'composition', true)}
+                  onMouseLeave={() => trackHover(comp.id, 'composition', false)}
+                >
+                  <img src={`data:image/png;base64,${comp.base64}`} alt={comp.id}/>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<App/>, document.getElementById('root'));
+  </script>
+</body>
+</html>
