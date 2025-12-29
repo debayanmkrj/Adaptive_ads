@@ -429,12 +429,6 @@ If you use this project in your research, please cite:
 }
 ```
 
-## Contact
-
-For questions, issues, or collaboration opportunities:
-- GitHub Issues: [https://github.com/yourusername/sam3-adaptive-ads/issues](https://github.com/yourusername/sam3-adaptive-ads/issues)
-- Email: your.email@example.com
-
 ## Changelog
 
 ### Version 1.0.0 (2024-12-29)
